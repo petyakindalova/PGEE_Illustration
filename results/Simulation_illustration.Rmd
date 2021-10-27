@@ -1,0 +1,338 @@
+---
+title: "Penalized GEE for relative risk regression - illustration"
+author: "Petya Kindalova"
+date: "October 2021"
+output: 
+  html_document:
+    theme: united
+    toc: yes
+    toc_float: yes
+---
+# Set the ground for the simulations
+  
+## Install R Markdown 
+```{r Install R Markdown}
+#install.packages("rmarkdown")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Install required packages 
+```{r Install required packages}
+#set your working directory
+#
+#install.packages("D:/Neuroimaging/RepeatedMeasures/PGEE_Illustration/src/binarySimCLF_1.0.tar.gz", repos=NULL, type="source")
+```
+
+## Load libraries 
+```{r Load required libraries, warning=FALSE, message=F}
+library(corpcor)
+library(logistf)
+library(Matrix)
+library(binarySimCLF)
+
+##
+
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(ggpointdensity)
+library(scales)
+library(lattice)
+library(raster)
+library(latticeExtra)
+library(rasterVis)
+library(graphics)
+library(grid)
+library(gridExtra)
+library(RColorBrewer)
+library(viridis)
+```
+
+## Load source files
+```{r Load functions}
+#log-link GEE with identity variance
+source("D:/Neuroimaging/RepeatedMeasures/PGEE_Illustration/src/gee_logPoisson_dispersion_fn.R")
+
+#log-link penalized GEE with identity variance
+source("D:/Neuroimaging/RepeatedMeasures/PGEE_Illustration/src/pgee_logPoisson_dispersion_fn.R")
+
+#updated data simulation functions to reflect log-link 
+source("D:/Neuroimaging/RepeatedMeasures/PGEE_Illustration/src/source_simdata.R")
+```
+
+## Set paths
+```{r paths}
+#output directory and filename *.RData
+outputdir = "D:/Neuroimaging/RepeatedMeasures/PGEE_Illustration/results/BaseScenario_R100.RData"
+figuresdir = "D:/Neuroimaging/RepeatedMeasures/PGEE_Illustration/figures/"
+```
+
+## Main variables 
+```{r variables}
+## set simulation params - here the base simulation scenario
+beta = true.beta  = c(-4, 1.6, 0.2) #true effect coefficients
+nc                = 50 #number of subjects N
+cl.size           = 4 #time points T
+prop              = 0.2 #c
+rho               = 0.4 #alpha
+n.sim             = 100 #repetitions R
+p                 = 3 #number of covariates P
+```
+
+## Set output variables
+```{r output_vars}
+coefs_geePK       = matrix(rep(0, n.sim*p), ncol=p)
+SEs_geePK         = matrix(rep(0, n.sim*p), ncol=p)
+SEs_model_geePK   = matrix(rep(0, n.sim*p), ncol=p)
+SEs_model_ratio_geePK = matrix(rep(0, n.sim*p), ncol=p)
+alpha_geePK       = matrix(rep(0, n.sim), ncol=1)
+phi_geePK         = rep(0, n.sim)
+eta_geePK         = rep(0, n.sim)
+iter_geePK        = rep(0, n.sim)
+conv_geePK        = rep(0, n.sim)
+
+coefs_PgeePK      = matrix(rep(0, n.sim*p), ncol=p)
+SEs_PgeePK        = matrix(rep(0, n.sim*p), ncol=p)
+SEs_model_ratio_PgeePK = matrix(rep(0, n.sim*p), ncol=p)
+alpha_PgeePK      = rep(0, n.sim)
+phi_PgeePK        = rep(0, n.sim)
+eta_PgeePK        = rep(0, n.sim)
+iter_PgeePK       = rep(0, n.sim)
+conv_PgeePK       = rep(0, n.sim)
+
+tabdat            = list()
+```
+
+# Simulate n.sim (R) data sets and run GEE/PGEE
+```{r sim, warning=FALSE, message=F}
+for(i in 1:n.sim){
+  set.seed(i)
+  datt <- gen.dataPP(beta= true.beta, nc=nc, cl.size=cl.size, prop, rho)
+  tabdat[[i]] = table(datt$X1i, datt$yij)
+  X = model.matrix(datt$yij~datt$X1i+datt$obstime, data=datt)
+  
+  tryCatch( {gee_PK = gee_run(y = datt$yij, X = X, n_subj = nc, n_visits = cl.size, 
+                                         covariance = "Exchangeable", max_iter = 25, phi_est = T) }, error=function(e) {print("gee error")})
+  if(!exists("gee_PK")){
+    coefs_geePK[i,] = rep(NA, 3)
+    SEs_geePK[i,] = rep(NA, 3)
+    SEs_model_geePK[i,] = rep(NA, 3)
+    SEs_model_ratio_geePK[i,] = rep(NA, 3)
+    alpha_geePK[i] = NA
+    phi_geePK[i] = NA
+    eta_geePK[i] = NA
+    iter_geePK[i] = NA
+    conv_geePK[i] = NA
+    
+  } else {
+    coefs_geePK[i,] = gee_PK$beta
+    SEs_geePK[i,] = gee_PK$beta_se_sandwich
+    SEs_model_geePK[i,] = gee_PK$beta_se_model
+    SEs_model_ratio_geePK[i,] = gee_PK$beta_se_model/gee_PK$beta_se_model_trace[1,]
+    alpha_geePK[i] =  gee_PK$alpha
+    phi_geePK[i] = gee_PK$phi
+    eta_geePK[i] = sum(X%*%gee_PK$beta > 0)
+    iter_geePK[i] = gee_PK$iterations
+    conv_geePK[i] = gee_PK$conv
+  }
+  if(exists("gee_PK")) {rm(gee_PK)}
+  #print("gee done")
+  ##
+  tryCatch( {Pgee_PK = pgee_run(y = datt$yij, X = X, n_subj = nc, n_visits = cl.size, 
+                                       covariance = "Exchangeable", max_iter = 25, phi_est = T)}, error=function(e) {print("pgee error")})
+  if(!exists("Pgee_PK")){
+    coefs_PgeePK[i,] = rep(NA, p)
+    SEs_PgeePK[i,] = rep(NA, p)
+    SEs_model_ratio_PgeePK[i,] = rep(NA, 3)
+    #SEs_sandwich_ratio_PgeePK[i,] = rep(NA, 3)
+    alpha_PgeePK[i] = NA
+    phi_PgeePK[i] = NA
+    eta_PgeePK[i] = NA
+    iter_geePK[i] = NA
+    conv_PgeePK[i] = NA
+    
+  } else {
+    coefs_PgeePK[i,] = as.vector(Pgee_PK$beta)
+    SEs_PgeePK[i,] = Pgee_PK$beta_se_sandwich
+    SEs_model_ratio_PgeePK[i,] = Pgee_PK$beta_se_model/Pgee_PK$beta_se_model_trace[1,]
+    #SEs_sandwich_ratio_PgeePK[i,] = Pgee_PK$beta_se_sandwich/Pgee_PK$beta_se_sandwich_trace[1,]
+    alpha_PgeePK[i] =  Pgee_PK$alpha
+    phi_PgeePK[i] = Pgee_PK$phi
+    eta_PgeePK[i] = sum(X%*%as.vector(Pgee_PK$beta) > 0)
+    iter_PgeePK[i] = Pgee_PK$iterations
+    conv_PgeePK[i] = Pgee_PK$conv
+  }
+  if(exists("Pgee_PK")) {rm(Pgee_PK)}
+  #print("pgee done")
+  if(i%%100==0) print(i)
+}
+
+save(coefs_geePK, coefs_PgeePK, SEs_geePK, SEs_PgeePK, SEs_model_geePK,
+     SEs_model_ratio_geePK, SEs_model_ratio_PgeePK, 
+     alpha_geePK, alpha_PgeePK, phi_geePK, phi_PgeePK, tabdat, eta_geePK, eta_PgeePK,
+     iter_geePK, iter_PgeePK, conv_geePK, conv_PgeePK, file=outputdir)
+```
+
+# Simulation summaries
+## Replicate numbers from Table 2
+```{r sim_performance_tab1}
+load(outputdir)
+complete_idx = complete.cases(SEs_model_ratio_geePK)
+
+## GEE summaries
+# BEC>10 (non-conv) - column 1, Table 2
+SE_dvrg = SEs_model_ratio_geePK[complete_idx,1]>10 | SEs_model_ratio_geePK[complete_idx,2]>10 | SEs_model_ratio_geePK[complete_idx,3]>10
+print(table(SE_dvrg))
+print(table(SE_dvrg&!conv_geePK[complete_idx]))
+
+#NAs - column 2, Table 2
+print(n.sim - sum(complete.cases(SEs_model_ratio_geePK)))
+complete_idx = complete.cases(SEs_model_ratio_geePK)
+
+# BEC<=10 (non-conv) - column 3, Table 2
+print(table(!conv_geePK[complete_idx]&!SE_dvrg))
+
+# #extra summaries
+# print(table(iter_geePK[complete_idx]))
+# print(table(eta_geePK[complete_idx]>0, exclude=NULL))
+
+## PGEE summaries
+# BEC>10 (non-conv) - column 1, Table 2
+SE_dvrg = SEs_model_ratio_PgeePK[complete_idx,1]>10 | SEs_model_ratio_PgeePK[complete_idx,2]>10 | SEs_model_ratio_PgeePK[complete_idx,3]>10
+print(table(SE_dvrg))
+print(table(SE_dvrg&!conv_PgeePK[complete_idx]))
+
+#NAs - column 2, Table 2
+print(n.sim - sum(complete.cases(SEs_model_ratio_PgeePK)))
+complete_idx = complete.cases(SEs_model_ratio_PgeePK)
+
+# BEC<=10 (non-conv) - column 3, Table 2
+print(table(!conv_PgeePK[complete_idx]&!SE_dvrg))
+
+# # extra sumamries
+# print(table(iter_PgeePK[complete_idx]))
+# print(table(eta_PgeePK[complete_idx]>0, exclude=NULL))
+```
+
+## Replicate numbers from Tables 2 and 3
+```{r sims_performance_tab2}
+# n.sim - column 1, Table 3
+SE_dvrg = which((SEs_model_ratio_geePK[,1]<10 & SEs_model_ratio_geePK[,2]<10 & SEs_model_ratio_geePK[,3]<10) & (SEs_model_ratio_PgeePK[,1]<10 & SEs_model_ratio_PgeePK[,2]<10 & SEs_model_ratio_PgeePK[,3]<10) &
+                    complete.cases(SEs_model_ratio_geePK) & complete.cases(SEs_model_ratio_PgeePK) & complete.cases(coefs_geePK) & conv_geePK)
+print(length(SE_dvrg))
+
+# columns 2,3,and 4, Table 3
+print("mean SE^2 GEE")
+print(mean(SEs_geePK[SE_dvrg,2]^2))
+#
+print("variance coefs GEE")
+print(sd(coefs_geePK[SE_dvrg,2])^2)
+#
+#ratio
+print(mean(SEs_geePK[SE_dvrg,2]^2)/sd(coefs_geePK[SE_dvrg,2])^2)
+print("---")
+
+## columns 5,6,and 7, Table 3
+print("mean SE^2 PGEE")
+print(mean(SEs_PgeePK[SE_dvrg,2]^2))
+#
+print("variance coefs PGEE")
+print(sd(coefs_PgeePK[SE_dvrg,2])^2)
+#
+#ratio
+print(mean(SEs_PgeePK[SE_dvrg,2]^2)/sd(coefs_PgeePK[SE_dvrg,2])^2)
+
+## columns 5,6,and 7, Table 3 - unconditional
+print("--unconditional--")
+complete_idx_pgee = complete.cases(SEs_model_ratio_PgeePK) & conv_PgeePK & (SEs_model_ratio_PgeePK[,1]<10 & SEs_model_ratio_PgeePK[,2]<10 & SEs_model_ratio_PgeePK[,3]<10)
+print(sum(complete_idx_pgee))
+#
+print("mean SE^2 PGEE")
+print(mean(SEs_PgeePK[complete_idx_pgee,2]^2))
+#
+print("variance coefs PGEE")
+print(sd(coefs_PgeePK[complete_idx_pgee,2])^2)
+#
+#ratio
+print(mean(SEs_PgeePK[complete_idx_pgee,2]^2)/sd(coefs_PgeePK[complete_idx_pgee,2])^2)
+
+#--------------
+
+#Table 2 - bias and MSE 
+# GEE
+bias_nonsep_gee = colSums(coefs_geePK[SE_dvrg,])/length(SE_dvrg) - beta; print(bias_nonsep_gee[2])
+mse_nonsep_gee = colSums(sweep(coefs_geePK[SE_dvrg,],2, beta)^2)/length(SE_dvrg); print(mse_nonsep_gee[2])
+# PGEE - conditional
+bias_nonsep_pgee = colSums(coefs_PgeePK[SE_dvrg,])/length(SE_dvrg) - beta; print(bias_nonsep_pgee[2])
+mse_nonsep_pgee = colSums(sweep(coefs_PgeePK[SE_dvrg,],2, beta)^2)/length(SE_dvrg); print(mse_nonsep_pgee[2])
+# PGEE - unconditional (in brackets)
+bias_complete_pgee = colSums(coefs_PgeePK[complete_idx_pgee,])/sum(complete_idx_pgee) - beta; print(bias_complete_pgee[2])
+mse_complete_pgee = colSums(sweep(coefs_PgeePK[complete_idx_pgee,],2, beta)^2)/sum(complete_idx_pgee); print(mse_complete_pgee[2])
+```
+
+## Replicate Figure 1
+```{r sim_fig1}
+complete_idx = which((SEs_model_ratio_geePK[,1]<=10 & SEs_model_ratio_geePK[,2]<=10 & SEs_model_ratio_geePK[,3]<=10) & complete.cases(SEs_model_ratio_geePK) & complete.cases(SEs_model_ratio_PgeePK) & conv_geePK)
+length(complete_idx)
+
+dat_zcomplete <- bind_rows(
+  tibble(x = coefs_geePK[complete_idx,2],
+         y = coefs_PgeePK[complete_idx,2]))
+
+p1 <- ggplot(dat_zcomplete, aes(x=x, y=y)) +
+        geom_pointdensity(adjust=0.1, alpha=0.3) + theme_classic(base_size=20) +
+        scale_color_viridis() +
+        geom_abline(intercept = 0, slope = 1, color="black", 
+              linetype="dashed", size=0.5) +
+        geom_hline(yintercept = 1.6, size=0.5) +
+        geom_vline(xintercept = 1.6, size=0.5) +
+        scale_x_continuous(limits=c(-5, 5)) + scale_y_continuous(limits=c(-5, 5)) +
+        labs(x=expression(RR-GEE ~ hat(beta) [b]), y=expression(RR-PGEE ~ tilde(beta) [b]))
+pdf(paste0(figuresdir, "estimates_binary_complete_scatter.pdf"), width=6, height=7)
+p1
+dev.off()
+
+##
+dat_zcomplete <- bind_rows(
+  tibble(x = SEs_geePK[complete_idx,2],
+         y = SEs_PgeePK[complete_idx,2]))
+
+p2 <- ggplot(dat_zcomplete, aes(x=x, y=y)) +
+        geom_pointdensity(adjust=0.1, alpha=0.3) + theme_classic(base_size=20) +
+        scale_color_viridis() +
+        geom_abline(intercept = 0, slope = 1, color="black", 
+              linetype="dashed", size=0.5) +
+        scale_x_continuous(limits=c(0, 2)) + scale_y_continuous(limits=c(0, 2)) +
+        labs(x=expression(RR-GEE ~ hat(se)[S](hat(beta) [b])), y=expression(RR-PGEE ~ hat(se)[S](tilde(beta) [b])))
+pdf(paste0(figuresdir, "SEs_binary_complete_scatter.pdf"), width=6, height=7)
+p2
+dev.off()
+
+##
+dat_zcomplete <- bind_rows(
+  tibble(x = coefs_geePK[complete_idx,2]/SEs_geePK[complete_idx,2],
+         y = coefs_PgeePK[complete_idx,2]/SEs_PgeePK[complete_idx,2]))
+
+p3 <- ggplot(dat_zcomplete, aes(x=x, y=y)) +
+        geom_pointdensity(adjust=0.1, alpha=0.3) + theme_classic(base_size=20) +
+        scale_color_viridis() +
+        geom_abline(intercept = 0, slope = 1, color="black", 
+              linetype="dashed", size=0.5) +
+        scale_x_continuous(limits=c(-5, 5)) + scale_y_continuous(limits=c(-5, 5)) +
+        labs(x=expression(RR-GEE ~ hat(z) [b]), y=expression(RR-PGEE ~ tilde(z) [b]))
+pdf(paste0(figuresdir, "zscores_binary_complete_scatter.pdf"), width=6, height=7)
+p3
+dev.off()
+```
+
+
+```{r, figures-side, fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+print(p1)
+print(p2)
+print(p3)
+```
+
