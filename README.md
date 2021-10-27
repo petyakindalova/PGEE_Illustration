@@ -18,6 +18,6 @@ Our manuscript compares the two log-link GEEs through extensive simulations and 
   * simulating the data through specifying the simulation parameters such as number of subjects, number of time points, within-cluster correlation, etc, using the code as part of the R package "binarySimCLF_1.0.tar" customized to simulate log-link binary data; 
   * fitting RR-GEE and RR-PGEE using the code provided by us in functions xxx;
   * obtaining the simulation summaries as discussed in the [manusctipt](XXX) in Tables 2, 3, and 4;
-  * replicating Figure 1 of the manuscript. 
+  * replicating Figure 1 of the manuscript, with the resulting three images saved in `/figures/`. 
 
 Note that the minimal example here is for lower number of data sets (100, not 1000) compared to the manuscript to ensure the code can run for a couple of minutes and the code included is meant to replicate only one simulation scenario, i.e. one line of each of the tables mentioned. 
